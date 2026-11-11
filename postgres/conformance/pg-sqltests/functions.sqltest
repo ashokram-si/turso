@@ -1663,3 +1663,16 @@ test random-divisor-is-not-an-integer {
 expect {
     ok
 }
+
+test string-to-array-empty-text-is-empty-array {
+    SELECT string_to_array('', ',');
+    SELECT string_to_array('', '');
+    SELECT string_to_array('', NULL);
+    SELECT string_to_array('', ',', '');
+}
+expect {
+    {}
+    {}
+    {}
+    {}
+}

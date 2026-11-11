@@ -430,6 +430,7 @@ pub(crate) fn exec_array_slice(arr: &Value, start: &Value, end: &Value) -> Resul
 /// Split a string into an array using a delimiter.
 /// string_to_array(text, delimiter [, null_string])
 /// If text is NULL, returns NULL.
+/// If text is empty, returns an empty array, whatever the delimiter (PostgreSQL behavior).
 /// If delimiter is NULL, splits into individual characters (PostgreSQL behavior).
 /// If null_string is provided, any element matching it becomes NULL.
 pub(crate) fn exec_string_to_array(
@@ -442,6 +443,9 @@ pub(crate) fn exec_string_to_array(
         Value::Null => return Ok(Value::Null),
         other => other.to_string(),
     };
+    if text_str.is_empty() {
+        return values_to_record_blob(&[]);
+    }
 
     let null_match: Option<String> = match null_str {
         Some(Value::Text(t)) => Some(t.as_str().to_string()),
@@ -745,6 +749,24 @@ mod tests {
         assert_eq!(elements[0], Value::build_text("h"));
         assert_eq!(elements[1], Value::build_text("e"));
         assert_eq!(elements[4], Value::build_text("o"));
+    }
+
+    #[test]
+    fn test_string_to_array_empty_text_is_empty_array() {
+        for delimiter in [Value::build_text(","), Value::build_text(""), Value::Null] {
+            for null_str in [None, Some(Value::build_text(""))] {
+                let result =
+                    exec_string_to_array(&Value::build_text(""), &delimiter, null_str.as_ref())
+                        .unwrap();
+                let Value::Blob(blob) = &result else {
+                    panic!("Expected Blob, got {result:?}");
+                };
+                assert!(
+                    array_values_from_blob(blob).unwrap().is_empty(),
+                    "delimiter {delimiter:?}, null_string {null_str:?}"
+                );
+            }
+        }
     }
 
     #[test]
