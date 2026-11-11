@@ -11,7 +11,7 @@ use turso_core::{
     io::FileSyncType,
     storage::sqlite3_ondisk::read_varint as read_sqlite_varint,
     types::{Text, WalFrameInfo},
-    Buffer, Completion, LimboError, OpenFlags, Value,
+    Buffer, Completion, CompletionError, LimboError, OpenFlags, Value,
 };
 
 use crate::{
@@ -1833,31 +1833,57 @@ pub async fn wal_apply_from_file<Ctx>(
     frames_file: &Arc<dyn turso_core::File>,
     session: &mut DatabaseWalSession,
 ) -> Result<u32> {
+    // A changes file that is empty, cut off inside a frame, or without its
+    // commit frame is an error for the caller: an assertion here would abort
+    // the process that embeds the sync engine.
     let size = frames_file.size()?;
-    assert!(size % WAL_FRAME_SIZE as u64 == 0);
+    if size == 0 {
+        return Err(Error::DatabaseSyncEngineError(
+            "changes file is empty: no frames to apply".to_string(),
+        ));
+    }
+    if size % WAL_FRAME_SIZE as u64 != 0 {
+        return Err(Error::DatabaseSyncEngineError(format!(
+            "changes file size {size} is not a multiple of the WAL frame size {WAL_FRAME_SIZE}"
+        )));
+    }
     #[allow(clippy::arc_with_non_send_sync)]
     let buffer = Arc::new(Buffer::new_temporary(WAL_FRAME_SIZE));
     tracing::info!("wal_apply_from_file: size={}", size);
     let mut db_size = 0;
     for offset in (0..size).step_by(WAL_FRAME_SIZE) {
         let c = Completion::new_read(buffer.clone(), move |result| {
-            let Ok((_, size)) = result else {
+            let Ok((_, read)) = result else {
                 return None;
             };
-            // todo(sivukhin): we need to error out in case of partial read
-            assert!(size as usize == WAL_FRAME_SIZE);
+            if read as usize != WAL_FRAME_SIZE {
+                return Some(CompletionError::ShortReadWalFrame {
+                    offset,
+                    expected: WAL_FRAME_SIZE,
+                    actual: read.max(0) as usize,
+                });
+            }
             None
         });
         let c = frames_file.pread(offset, c)?;
-        while !c.succeeded() {
+        while !c.finished() {
             coro.yield_(SyncEngineIoResult::IO).await?;
+        }
+        if let Some(err) = c.get_error() {
+            return Err(LimboError::CompletionError(err).into());
         }
         let info = WalFrameInfo::from_frame_header(buffer.as_slice());
         tracing::debug!("got frame: {:?}", info);
         db_size = info.db_size;
         session.append_page(info.page_no, &buffer.as_slice()[WAL_FRAME_HEADER..])?;
     }
-    assert!(db_size > 0);
+    // Only a commit frame has the database size: without one, the changes stop
+    // inside a transaction.
+    if db_size == 0 {
+        return Err(Error::DatabaseSyncEngineError(
+            "changes file does not end with a commit frame".to_string(),
+        ));
+    }
     Ok(db_size)
 }
 
@@ -5836,6 +5862,69 @@ mod tests {
             .map(|name| is_logically_replayable_table(name))
             .collect::<Vec<_>>();
         assert_eq!(matched, expected);
+    }
+
+    /// A changes file that a failed or interrupted pull left empty, cut off
+    /// inside a frame, or without its commit frame is an error, not an abort
+    /// of the embedding process (#11231).
+    #[test]
+    fn wal_apply_from_file_rejects_incomplete_changes_files() {
+        use super::{append_file_bytes, wal_apply_from_file, WAL_FRAME_SIZE};
+        use turso_core::types::WalFrameInfo;
+
+        // One frame of page 1 without the database size of a commit frame.
+        let mut uncommitted_frame = vec![0u8; WAL_FRAME_SIZE];
+        WalFrameInfo {
+            page_no: 1,
+            db_size: 0,
+        }
+        .put_to_frame_header(&mut uncommitted_frame);
+        let cases: Vec<(&str, Vec<u8>, &str)> = vec![
+            ("empty", Vec::new(), "changes file is empty"),
+            (
+                "truncated",
+                vec![0u8; WAL_FRAME_SIZE + 10],
+                "is not a multiple of the WAL frame size",
+            ),
+            (
+                "uncommitted",
+                uncommitted_frame,
+                "does not end with a commit frame",
+            ),
+        ];
+
+        let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::MemoryIO::new());
+        let db = turso_core::Database::open_file(io.clone(), ":memory:", Arc::new(SqliteDialect))
+            .unwrap();
+        let db = Arc::new(DatabaseTape::new(db));
+        for (name, content, expected) in cases {
+            let changes = io
+                .open_file(
+                    &format!("changes-{name}"),
+                    turso_core::OpenFlags::Create,
+                    false,
+                )
+                .unwrap();
+            let mut gen = genawaiter::sync::Gen::new({
+                let db = db.clone();
+                let changes = changes.clone();
+                move |coro| async move {
+                    let coro: Coro<()> = coro.into();
+                    let mut offset = 0;
+                    append_file_bytes(&coro, &changes, &mut offset, &content).await?;
+                    let mut session = db.start_wal_session(&coro).await?;
+                    wal_apply_from_file(&coro, &changes, &mut session).await
+                }
+            });
+            let result = loop {
+                match gen.resume_with(Ok(())) {
+                    genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
+                    genawaiter::GeneratorState::Complete(result) => break result,
+                }
+            };
+            let err = result.expect_err(name).to_string();
+            assert!(err.contains(expected), "{name}: {err}");
+        }
     }
 
     fn push_test_opts() -> DatabaseSyncEngineOpts {
