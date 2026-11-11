@@ -1663,3 +1663,129 @@ test random-divisor-is-not-an-integer {
 expect {
     ok
 }
+
+test format-quotes-identifiers-and-literals {
+    SELECT format('INSERT INTO %I VALUES(%L)', 'mytab', 'x');
+    SELECT format('%s|%I|%L', 'a b', 'a b', 'it''s');
+    SELECT format('INSERT INTO %I VALUES(%L)', 'Foo bar', 'O''Reilly');
+    SELECT format('INSERT INTO %I VALUES(%L)', 'locations', 'C:\Program Files');
+}
+expect {
+    INSERT INTO mytab VALUES('x')
+    a b|"a b"|'it''s'
+    INSERT INTO "Foo bar" VALUES('O''Reilly')
+    INSERT INTO locations VALUES(E'C:\\\\Program Files')
+}
+
+test format-empty-and-percent {
+    SELECT '[' || format('') || ']';
+    SELECT format('Testing %s, %s, %s, %%', 'one', 'two', 'three');
+}
+expect {
+    []
+    Testing one, two, three, %
+}
+
+test format-null-arguments {
+    SELECT format('[%s|%L]', NULL, NULL);
+    SELECT (format(NULL) IS NULL)::int;
+}
+expect {
+    [|NULL]
+    1
+}
+
+test format-widths {
+    SELECT format('|%10s|', 'foo');
+    SELECT format('|%-10s|', 'foo');
+    SELECT format('|%*s|', 10, 'foo');
+    SELECT format('|%*s|', -10, 'foo');
+    SELECT format('|%-*s|', 10, 'foo');
+    SELECT format('|%-*s|', -10, 'foo');
+}
+expect {
+    |       foo|
+    |foo       |
+    |       foo|
+    |foo       |
+    |foo       |
+    |foo       |
+}
+
+test format-argument-positions {
+    SELECT format('Testing %3$s, %2$s, %1$s', 'one', 'two', 'three');
+    SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
+    SELECT format('|%*2$s|', 'foo', 10, 'bar');
+    SELECT format('|%1$*2$s|', 'foo', 10, 'bar');
+}
+expect {
+    Testing three, two, one
+    Testing three, two, three
+    |       bar|
+    |       foo|
+}
+
+test format-quotes-keywords-and-digit-leading-identifiers {
+    SELECT format('%I.%I', 'select', '1abc');
+}
+expect {
+    "select"."1abc"
+}
+
+test format-width-counts-characters-and-null-width-is-zero {
+    SELECT format('|%5s|', 'é');
+    SELECT format('|%*s|', NULL, 'x');
+}
+expect {
+    |    é|
+    |x|
+}
+
+test format-without-arguments-errors {
+    SELECT format();
+}
+@sqlstate 42883
+expect error {
+    function format\(\) does not exist
+}
+
+test format-identifier-from-null-errors {
+    SELECT format('%I', NULL);
+}
+@sqlstate 22004
+expect error {
+    null values cannot be formatted as an SQL identifier
+}
+
+test format-too-few-arguments-errors {
+    SELECT format('%s %s', 'a');
+}
+@sqlstate 22023
+expect error {
+    too few arguments for format\(\)
+}
+
+test format-unknown-type-specifier-errors {
+    SELECT format('%d', 1);
+}
+@sqlstate 22023
+expect error {
+    unrecognized format\(\) type specifier "d"
+}
+
+test format-argument-zero-errors {
+    SELECT format('%0$s', 'a');
+}
+@sqlstate 22023
+expect error {
+    format specifies argument 0, but arguments are numbered from 1
+}
+
+test format-unterminated-specifier-errors {
+    SELECT format('%1$', 'a');
+}
+@sqlstate 22023
+expect error {
+    unterminated format\(\) type specifier
+}
+

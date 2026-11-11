@@ -194,10 +194,11 @@ impl Dialect for PostgresDialect {
     }
 
     fn resolve_function(&self, name: &str, arg_count: usize) -> Result<Option<Func>> {
-        // random() is a native function (see functions.rs) because it returns
-        // a double, not SQLite's integer. Skipping the builtin lets that one
-        // be found.
-        if name.eq_ignore_ascii_case("random") {
+        // random() and format() are native functions (see functions.rs):
+        // random() returns a double, not SQLite's integer, and format() reads
+        // PostgreSQL's %I and %L, not SQLite's printf specifiers. Skipping the
+        // builtin lets the native one be found.
+        if name.eq_ignore_ascii_case("random") || name.eq_ignore_ascii_case("format") {
             return Ok(None);
         }
         turso_core::dialect::engine::resolve_builtin_function(name, arg_count)
