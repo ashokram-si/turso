@@ -155,3 +155,12 @@ test error-cast-to-other-name-in-information-schema {
 expect error {
     type "information_schema.int4" does not exist
 }
+
+test error-drop-type-used-by-a-cast-in-a-policy {
+    CREATE TYPE err_policy_mood AS ENUM ('happy', 'sad');
+    CREATE TABLE err_policy_t (m text);
+    CREATE POLICY err_policy_p ON err_policy_t USING (m::err_policy_mood = 'happy');
+    DROP TYPE err_policy_mood;
+}
+@sqlstate 2BP01
+expect error {}
