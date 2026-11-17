@@ -565,6 +565,21 @@ fn type_name_text(type_name: &TypeName) -> Result<String, ParseError> {
     Ok(text)
 }
 
+/// Whether `name`, as pg_query gives it, is a built-in PostgreSQL type, or
+/// the array type of a built-in base type (`_int4`).
+pub fn is_builtin_type(name: &str) -> bool {
+    POLYMORPHIC_TYPES.contains(&name)
+        || PSEUDO_TYPES.contains(&name)
+        || is_base_type(name)
+        || name.strip_prefix('_').is_some_and(is_base_type)
+}
+
+/// Whether `name`, as pg_query gives it, is a built-in base, range or
+/// multirange type.
+pub(crate) fn is_base_type(name: &str) -> bool {
+    BASE_TYPES.contains(&name)
+}
+
 // FIXME: the three lists that follow are written by hand, and they must
 // follow the PostgreSQL version of pg_query. They are also one of three
 // places that say what a type name is. The FIXME in

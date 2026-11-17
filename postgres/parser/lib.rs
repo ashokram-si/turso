@@ -10,6 +10,8 @@ use thiserror::Error;
 pub mod sqlstate;
 pub mod translator;
 
+pub use create_function::is_builtin_type;
+
 #[derive(Debug, Error)]
 pub enum ParseError {
     #[error("{0}")]

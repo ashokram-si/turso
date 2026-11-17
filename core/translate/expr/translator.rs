@@ -1,4 +1,6 @@
 use super::*;
+use crate::namespace::NamespaceId;
+use crate::schema::{RelationKind, Schema};
 use crate::types::StrictType;
 
 /// Reason why [translate_expr_no_constant_opt()] was called.
@@ -825,6 +827,7 @@ fn translate_cast_expr(
         if StrictType::named(&name).is_none()
             && resolver.schema().get_type_def_unchecked(&name).is_none()
             && !resolver.catalog.dialect.cast_type_exists(&name)
+            && !names_a_relation(resolver, &name)
         {
             let brackets = "[]".repeat(tn.array_dimensions as usize);
             crate::bail_parse_error!("type \"{name}{brackets}\" does not exist");
@@ -899,6 +902,24 @@ fn translate_cast_expr(
         affinity: type_affinity,
     });
     Ok(target_register)
+}
+
+/// Whether `name` is a table's or view's on the search path. In PostgreSQL
+/// their row type has their name, so `'(1)'::t` names a type; a sequence
+/// and an index have no row type.
+fn names_a_relation(resolver: &Resolver, name: &str) -> bool {
+    let is_relation = |schema: &Schema, namespace: NamespaceId, name: &str| {
+        schema
+            .relation_kind(namespace, name)
+            .is_some_and(|kind| !matches!(kind, RelationKind::Index | RelationKind::Sequence))
+    };
+    resolver
+        .resolve_unqualified_existing(name, is_relation)
+        .is_ok_and(|namespace| {
+            resolver.with_schema(namespace.database_id, |schema| {
+                is_relation(schema, namespace.id, name)
+            })
+        })
 }
 
 /// Emits a CAST of the value in `reg` to the custom type `type_name`, whose
