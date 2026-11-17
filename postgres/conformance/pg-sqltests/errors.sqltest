@@ -164,3 +164,43 @@ test error-drop-type-used-by-a-cast-in-a-policy {
 }
 @sqlstate 2BP01
 expect error {}
+
+# A built-in type that tursopg has no type for, a row type and a domain of
+# information_schema are refused as not supported: tursopg would not give
+# the value PostgreSQL gives.
+@skip-if postgres "PostgreSQL casts to xid"
+test error-cast-to-builtin-type-without-a-tursopg-type {
+    SELECT '1'::xid;
+}
+@sqlstate 0A000
+expect error {
+    a cast to type "xid" is not supported
+}
+
+@skip-if postgres "PostgreSQL casts to point[]"
+test error-cast-to-array-of-builtin-type-without-a-tursopg-type {
+    SELECT '{"(1,2)"}'::_point;
+}
+@sqlstate 0A000
+expect error {
+    a cast to type "_point" is not supported
+}
+
+@skip-if postgres "PostgreSQL casts to a table's row type"
+test error-cast-to-row-type-of-a-table {
+    CREATE TABLE cast_row_t (a int);
+    SELECT '(1)'::cast_row_t;
+}
+@sqlstate 0A000
+expect error {
+    a cast to the row type of "cast_row_t" is not supported
+}
+
+@skip-if postgres "PostgreSQL casts to its information_schema domains"
+test error-cast-to-information-schema-domain {
+    SELECT 'x'::information_schema.sql_identifier;
+}
+@sqlstate 0A000
+expect error {
+    a cast to type "information_schema.sql_identifier" is not supported
+}

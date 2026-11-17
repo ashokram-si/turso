@@ -2621,35 +2621,6 @@ expect {
     1|x|<a/>
 }
 
-# A built-in type that tursopg has no type for casts as a column of the
-# type stores it: point as text.
-test cast-to-builtin-type-without-a-tursopg-type-keeps-the-text {
-    SELECT '(1,2)'::point, '{"(1,2)"}'::_point;
-}
-expect {
-    (1,2)|{"(1,2)"}
-}
-
-test cast-to-information-schema-domain {
-    SELECT 'x'::information_schema.sql_identifier, '3'::information_schema.cardinal_number;
-}
-expect {
-    x|3
-}
-
-# A table's or view's name is the name of its row type. tursopg doesn't
-# read a row value yet, so only the row count is compared.
-test cast-to-row-type-of-a-table-or-view-is-not-refused {
-    CREATE TABLE cast_row_t (a int);
-    CREATE VIEW cast_row_v AS SELECT 1 AS a;
-    SELECT count(*) FROM (SELECT '(1)'::cast_row_t, '(1)'::cast_row_v) AS s;
-    DROP VIEW cast_row_v;
-    DROP TABLE cast_row_t;
-}
-expect {
-    1
-}
-
 test cast-to-enum-and-domain {
     CREATE TYPE cast_mood AS ENUM ('happy', 'sad');
     CREATE DOMAIN cast_pos AS int CHECK (VALUE > 0);
@@ -2659,15 +2630,6 @@ test cast-to-enum-and-domain {
 }
 expect {
     sad|3
-}
-
-# PostgreSQL types tursopg has no type for cast as they did before casts
-# to a name that is no type were refused.
-test cast-to-builtin-type-tursopg-does-not-map {
-    SELECT '1'::xid, '1'::int2vector, xid '1', '1'::pg_catalog.xid;
-}
-expect {
-    1|1|1|1
 }
 
 # `_int4` is PostgreSQL's name for int4[], and `_mood` for mood[].
@@ -2688,3 +2650,12 @@ test cast-to-domain-named-like-a-builtin-type-checks-constraint {
 }
 @sqlstate 23514
 expect error {}
+
+# Drivers cast to the OID alias types when they read the catalogs, as
+# pgjdbc and Npgsql do with `typinput = 'array_in'::regproc`.
+test cast-to-oid-alias-type-in-a-catalog-query {
+    SELECT count(*) FROM pg_type WHERE typinput = 'array_in'::regproc AND typname = 'nosuch';
+}
+expect {
+    0
+}

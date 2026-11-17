@@ -647,14 +647,23 @@ pub trait Dialect: Send + Sync + 'static {
         false
     }
 
-    /// Whether a CAST may name `name`, a name that is neither a STRICT type
-    /// nor a custom type of the schema.
+    /// Checks a CAST to `name`, a type name that is neither a STRICT type nor
+    /// a custom type of the schema, written with `array_dimensions` `[]`s.
+    /// `relation_kind` gives the kind of the relation on the search path that
+    /// has the name, if one has it; it is a closure so that a dialect that
+    /// takes every name, as SQLite does for each `CAST(x AS NUMERIC)`, never
+    /// looks the name up.
     ///
     /// SQLite takes any name and gives the value the affinity the name
-    /// implies. PostgreSQL takes only its built-in types, and refuses
-    /// `CAST(x AS nosuch)` with `type "nosuch" does not exist`.
-    fn cast_type_exists(&self, _name: &str) -> bool {
-        true
+    /// implies. PostgreSQL refuses `CAST(x AS nosuch)` with `type "nosuch"
+    /// does not exist`.
+    fn check_cast_to_unlisted_type(
+        &self,
+        _name: &str,
+        _array_dimensions: u32,
+        _relation_kind: &dyn Fn() -> Option<RelationKind>,
+    ) -> Result<()> {
+        Ok(())
     }
 
     /// Whether constraint errors report the values that broke the constraint.

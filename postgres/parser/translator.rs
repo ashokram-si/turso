@@ -7192,15 +7192,22 @@ fn pg_type_name_to_ast_type(
     type_name: &pg_query::protobuf::TypeName,
 ) -> Result<ast::Type, ParseError> {
     let names = extract_key_columns(&type_name.names)?;
-    let pg_type = match names.as_slice() {
-        // The domains of information_schema, which is not on the search path.
-        // Another name there is kept qualified, and is no type.
-        [schema, name] if schema == "information_schema" => information_schema_domain(name)
-            .map_or_else(|| format!("{schema}.{name}"), str::to_string),
-        _ => object_name(&type_name.names, is_default_schema, "type")?,
-    };
+    if let [schema, name] = names.as_slice() {
+        // information_schema has only its domains for types.
+        if schema == "information_schema" {
+            return Err(if INFORMATION_SCHEMA_DOMAINS.contains(&name.as_str()) {
+                ParseError::not_supported(format!("a cast to type \"{schema}.{name}\""))
+            } else {
+                ParseError::Sqlstate {
+                    sqlstate: SQLSTATE_UNDEFINED_OBJECT,
+                    message: format!("type \"{schema}.{name}\" does not exist"),
+                }
+            });
+        }
+    }
+    let pg_type = object_name(&type_name.names, is_default_schema, "type")?;
 
-    let (name, element_of_array) = match builtin_cast_type(&pg_type) {
+    let (name, element_of_array) = match cast_storage_type(&pg_type) {
         Some(name) => (name, 0),
         None => match pg_type.strip_prefix('_') {
             // `_int4` is PostgreSQL's name for int4[], and `_mood` for mood[]:
@@ -7208,19 +7215,20 @@ fn pg_type_name_to_ast_type(
             // itself named `_x` can't be cast to. PostgreSQL has no arrays of
             // arrays, so `_int4[]` is kept as written.
             Some(element) if !element.is_empty() && type_name.array_bounds.is_empty() => {
-                match builtin_cast_type(element) {
-                    Some(name) if crate::create_function::is_builtin_type(element) => (name, 1),
-                    // `_integer`: `integer` is a name of int4, not a type.
+                let is_builtin = crate::create_function::is_builtin_type(element);
+                match cast_storage_type(element) {
+                    Some(name) if is_builtin => (name, 1),
+                    // `_integer` (`integer` is a name of int4, not a type), or
+                    // an array of a built-in type that tursopg has no type
+                    // for, such as `_point`: kept as written, for the
+                    // dialect to refuse.
                     Some(_) => (pg_type.as_str(), 0),
-                    // A pseudo-type, as `_record`: no array type has the name.
-                    None if crate::create_function::is_builtin_type(element) => {
-                        (pg_type.as_str(), 0)
-                    }
+                    None if is_builtin => (pg_type.as_str(), 0),
                     None => (element, 1),
                 }
             }
-            // Kept as written: an enum or domain, a pseudo-type, or no type,
-            // which the dialect tells apart (`is_builtin_type`).
+            // Kept as written: an enum or domain, another built-in type, or
+            // no type, which the dialect tells apart.
             _ => (pg_type.as_str(), 0),
         },
     };
@@ -7234,36 +7242,14 @@ fn pg_type_name_to_ast_type(
     })
 }
 
-/// The type a CAST to the built-in PostgreSQL type `pg_type` gives its value:
-/// a base SQLite storage type or a Turso type. Another base type casts as a
-/// column of the type stores its values (`map_pg_type`): `regproc` as an
-/// integer, `point` and a type stored as written, such as `xid`, as text.
-fn builtin_cast_type(pg_type: &str) -> Option<&'static str> {
-    if let Some(name) = cast_storage_type(pg_type) {
-        return Some(name);
-    }
-    if !crate::create_function::is_base_type(pg_type) {
-        return None;
-    }
-    let stored = map_pg_type(pg_type, &[]).map(|mapping| mapping.type_name);
-    Some(match stored.as_deref() {
-        Some("INTEGER") => "INTEGER",
-        Some("REAL") => "REAL",
-        Some("BLOB") => "BLOB",
-        _ => "TEXT",
-    })
-}
-
-/// The type a CAST to the `information_schema` domain `name` stores its
-/// value as.
-fn information_schema_domain(name: &str) -> Option<&'static str> {
-    match name {
-        "cardinal_number" => Some("INTEGER"),
-        "character_data" | "sql_identifier" | "yes_or_no" => Some("TEXT"),
-        "time_stamp" => Some("timestamptz"),
-        _ => None,
-    }
-}
+/// The domains of `information_schema`.
+const INFORMATION_SCHEMA_DOMAINS: &[&str] = &[
+    "cardinal_number",
+    "character_data",
+    "sql_identifier",
+    "time_stamp",
+    "yes_or_no",
+];
 
 /// The type a CAST to the PostgreSQL type `pg_type` gives its value, for the
 /// types CAST maps to a base SQLite storage type or a Turso type.
@@ -7271,6 +7257,11 @@ fn cast_storage_type(pg_type: &str) -> Option<&'static str> {
     let name = match pg_type.to_uppercase().as_str() {
         "INTEGER" | "INT" | "INT4" | "SMALLINT" | "INT2" | "SERIAL" | "SMALLSERIAL" | "OID"
         | "REGCLASS" | "REGTYPE" => "INTEGER",
+        // The other OID alias types, stored as integers as their columns are
+        // (`map_pg_type`). Drivers cast to them when they read the catalogs:
+        // pgjdbc and Npgsql send `typinput = 'array_in'::regproc`.
+        "REGPROC" | "REGPROCEDURE" | "REGOPER" | "REGOPERATOR" | "REGCONFIG" | "REGDICTIONARY"
+        | "REGNAMESPACE" | "REGROLE" | "REGCOLLATION" => "INTEGER",
         // Casts like INTEGER; the name types the result as int8.
         "BIGINT" | "INT8" | "BIGSERIAL" => "BIGINT",
         "REAL" | "FLOAT4" | "DOUBLE PRECISION" | "FLOAT8" | "NUMERIC" | "DECIMAL" | "MONEY" => {
@@ -7284,8 +7275,9 @@ fn cast_storage_type(pg_type: &str) -> Option<&'static str> {
         "TIMESTAMP" => "timestamp",
         "TIMESTAMPTZ" => "timestamptz",
         "TEXT" | "VARCHAR" | "CHAR" | "BPCHAR" | "NAME" | "UUID" | "INTERVAL" | "INET" | "JSON"
-        | "JSONB" | "XML" | "CIDR" | "MACADDR" | "MACADDR8" | "BIT" | "VARBIT" | "TSVECTOR"
-        | "TSQUERY" => "TEXT",
+        | "JSONB" | "XML" | "CIDR" | "MACADDR" | "BIT" | "VARBIT" | "TSVECTOR" | "TSQUERY" => {
+            "TEXT"
+        }
         "BYTEA" | "BLOB" => "BLOB",
         _ => return None,
     };

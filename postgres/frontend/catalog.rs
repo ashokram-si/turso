@@ -1,3 +1,4 @@
+use crate::error::sqlstate_error;
 use crate::functions::validate_pg_input;
 use crate::roles::{connection_roles, schema_roles, Role, RoleCatalog};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -22,6 +23,7 @@ use turso_core::{
 use turso_ext::{ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabKind};
 use turso_parser::ast::{self, RefAct, SortOrder};
 use turso_pg_parser::quote_identifier;
+use turso_pg_parser::sqlstate::{SQLSTATE_FEATURE_NOT_SUPPORTED, SQLSTATE_UNDEFINED_OBJECT};
 
 use turso_pg_parser::translator::BOOTSTRAP_SUPERUSER_NAME;
 pub use turso_pg_parser::translator::{is_catalog_table_name, is_catalog_view_name};
@@ -395,8 +397,33 @@ impl Dialect for PostgresDialect {
         true
     }
 
-    fn cast_type_exists(&self, name: &str) -> bool {
-        turso_pg_parser::is_builtin_type(name)
+    fn check_cast_to_unlisted_type(
+        &self,
+        name: &str,
+        array_dimensions: u32,
+        relation_kind: &dyn Fn() -> Option<RelationKind>,
+    ) -> Result<()> {
+        let written = format!("{name}{}", "[]".repeat(array_dimensions as usize));
+        // A built-in type that tursopg has no type for, and a row type: the
+        // value would not come out as PostgreSQL gives it.
+        if turso_pg_parser::is_builtin_type(name) {
+            return Err(sqlstate_error(
+                SQLSTATE_FEATURE_NOT_SUPPORTED,
+                format!("a cast to type \"{written}\" is not supported"),
+            ));
+        }
+        if let Some(RelationKind::Table | RelationKind::View | RelationKind::MaterializedView) =
+            relation_kind()
+        {
+            return Err(sqlstate_error(
+                SQLSTATE_FEATURE_NOT_SUPPORTED,
+                format!("a cast to the row type of \"{name}\" is not supported"),
+            ));
+        }
+        Err(sqlstate_error(
+            SQLSTATE_UNDEFINED_OBJECT,
+            format!("type \"{written}\" does not exist"),
+        ))
     }
 }
 

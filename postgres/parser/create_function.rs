@@ -576,7 +576,7 @@ pub fn is_builtin_type(name: &str) -> bool {
 
 /// Whether `name`, as pg_query gives it, is a built-in base, range or
 /// multirange type.
-pub(crate) fn is_base_type(name: &str) -> bool {
+fn is_base_type(name: &str) -> bool {
     BASE_TYPES.contains(&name)
 }
 

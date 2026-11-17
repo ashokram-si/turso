@@ -826,11 +826,12 @@ fn translate_cast_expr(
         let name = crate::util::dequote(&tn.name);
         if StrictType::named(&name).is_none()
             && resolver.schema().get_type_def_unchecked(&name).is_none()
-            && !resolver.catalog.dialect.cast_type_exists(&name)
-            && !names_a_relation(resolver, &name)
         {
-            let brackets = "[]".repeat(tn.array_dimensions as usize);
-            crate::bail_parse_error!("type \"{name}{brackets}\" does not exist");
+            resolver.catalog.dialect.check_cast_to_unlisted_type(
+                &name,
+                tn.array_dimensions,
+                &|| relation_kind_on_search_path(resolver, &name),
+            )?;
         }
     }
 
@@ -904,22 +905,18 @@ fn translate_cast_expr(
     Ok(target_register)
 }
 
-/// Whether `name` is a table's or view's on the search path. In PostgreSQL
-/// their row type has their name, so `'(1)'::t` names a type; a sequence
-/// and an index have no row type.
-fn names_a_relation(resolver: &Resolver, name: &str) -> bool {
-    let is_relation = |schema: &Schema, namespace: NamespaceId, name: &str| {
-        schema
-            .relation_kind(namespace, name)
-            .is_some_and(|kind| !matches!(kind, RelationKind::Index | RelationKind::Sequence))
-    };
-    resolver
-        .resolve_unqualified_existing(name, is_relation)
-        .is_ok_and(|namespace| {
-            resolver.with_schema(namespace.database_id, |schema| {
-                is_relation(schema, namespace.id, name)
-            })
+/// The kind of the relation named `name` on the search path, if there is one.
+fn relation_kind_on_search_path(resolver: &Resolver, name: &str) -> Option<RelationKind> {
+    let kind_in =
+        |schema: &Schema, namespace: NamespaceId, name: &str| schema.relation_kind(namespace, name);
+    let namespace = resolver
+        .resolve_unqualified_existing(name, |schema, namespace, name| {
+            kind_in(schema, namespace, name).is_some()
         })
+        .ok()?;
+    resolver.with_schema(namespace.database_id, |schema| {
+        kind_in(schema, namespace.id, name)
+    })
 }
 
 /// Emits a CAST of the value in `reg` to the custom type `type_name`, whose
