@@ -6636,6 +6636,17 @@ pub fn is_catalog_table_name(name: &str) -> bool {
     )
 }
 
+/// Whether the catalog name `name` is a relation in PostgreSQL, with a row
+/// type of the same name: a catalog table or view, not one of the functions
+/// that tursopg also lists among them.
+pub fn is_catalog_relation_name(name: &str) -> bool {
+    is_catalog_table_name(name)
+        && !matches!(
+            name.to_ascii_lowercase().as_str(),
+            "pg_get_tabledef" | "pg_input_error_info" | "pg_options_to_table" | "unnest"
+        )
+}
+
 /// Whether the catalog relation `name` is a view in PostgreSQL. PostgreSQL
 /// rejects DML on these views because they do not read a single table, and
 /// it does so before it checks privileges.
@@ -9045,6 +9056,54 @@ pub fn try_extract_refresh_matview(
         .map(|relation| relation.relname.clone())
         .unwrap_or_default();
     Ok(Some(PgRefreshMatviewStmt { name }))
+}
+
+/// The type that a DROP TYPE or DROP DOMAIN of one object names.
+pub struct DropTypeTarget {
+    /// DROP DOMAIN rather than DROP TYPE.
+    pub domain: bool,
+    pub schema: Option<String>,
+    pub name: String,
+    /// The number of `[]` after the name.
+    pub array_bounds: usize,
+}
+
+/// The target of `parse_result` if it is a DROP TYPE or DROP DOMAIN of one
+/// object named with at most a schema. A DROP of several objects is left to
+/// the translator, which refuses it.
+pub fn drop_type_target(parse_result: &ParseResult) -> Option<DropTypeTarget> {
+    use pg_query::protobuf::node::Node;
+    use pg_query::protobuf::ObjectType;
+    use pg_query::NodeRef;
+
+    let nodes = parse_result.protobuf.nodes();
+    let NodeRef::DropStmt(drop) = &nodes.first()?.0 else {
+        return None;
+    };
+    let domain = match ObjectType::try_from(drop.remove_type).ok()? {
+        ObjectType::ObjectType => false,
+        ObjectType::ObjectDomain => true,
+        _ => return None,
+    };
+    let [object] = drop.objects.as_slice() else {
+        return None;
+    };
+    let Some(Node::TypeName(type_name)) = &object.node else {
+        return None;
+    };
+    let mut names = extract_key_columns(&type_name.names).ok()?;
+    let name = names.pop()?;
+    let schema = match names.as_slice() {
+        [] => None,
+        [schema] => Some(schema.clone()),
+        _ => return None,
+    };
+    Some(DropTypeTarget {
+        domain,
+        schema,
+        name,
+        array_bounds: type_name.array_bounds.len(),
+    })
 }
 
 /// Returns true if the parse result is a DROP MATERIALIZED VIEW statement.

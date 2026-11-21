@@ -30,9 +30,11 @@ use turso_pg_parser::sqlstate::{
     SQLSTATE_FEATURE_NOT_SUPPORTED, SQLSTATE_INSUFFICIENT_PRIVILEGE, SQLSTATE_INVALID_NAME,
     SQLSTATE_INVALID_PARAMETER_VALUE, SQLSTATE_INVALID_SCHEMA_NAME,
     SQLSTATE_OBJECT_NOT_IN_PREREQUISITE_STATE, SQLSTATE_RESERVED_NAME, SQLSTATE_UNDEFINED_OBJECT,
+    SQLSTATE_WRONG_OBJECT_TYPE,
 };
 use turso_pg_parser::translator::{
-    check_enum_labels, execution_takes_snapshot, frontend_stmt, is_drop_matview, is_tx_exit_stmt,
+    check_enum_labels, drop_type_target, execution_takes_snapshot, frontend_stmt,
+    is_catalog_relation_name, is_catalog_view_name, is_drop_matview, is_tx_exit_stmt,
     set_transaction_access_mode, unnamed_index_name, unqualified_create_table_name_location,
     FrontendStmt, PgCopyFromStmt, PgCreateSchemaStmt, PgDropRelationsStmt, PgDropSchemaStmt,
     PgGrantStmt, PgGrantTables, PgGrantee, PgSetStmt, PgSetTo, PgSetValue, PgShowStmt,
@@ -584,6 +586,7 @@ fn translate_statement<'a>(
             ));
         }
     }
+    reject_drop_of_row_type(&pg_conn.conn, &parse_result)?;
     let conn_for_names = Arc::clone(&pg_conn.conn);
     let conn_for_functions = Arc::clone(&pg_conn.conn);
     let translator = PostgreSQLTranslator::new()
@@ -1761,6 +1764,171 @@ fn reject_drop_of_other_relation_kind(
         return Err(crate::error::wrong_relation_kind(name, expected_kind, kind));
     }
     Ok(())
+}
+
+/// PostgreSQL gives each table, view and materialized view a row type of
+/// the same name, with an array type, and refuses to drop either while the
+/// relation is there, with IF EXISTS too: 2BP01, or 42809 for DROP DOMAIN.
+/// tursopg keeps no such types, so DROP TYPE would find nothing to drop.
+/// Runs before translation, which drops the schema and the `[]` of the name.
+fn reject_drop_of_row_type(
+    conn: &Arc<Connection>,
+    parse_result: &turso_pg_parser::ParseResult,
+) -> Result<()> {
+    if let Some(target) = drop_type_target(parse_result) {
+        let found = if target.array_bounds > 0 {
+            // `t[]`: the array type of what `t` names.
+            row_type_of(conn, &target, &target.name).map(|row| (row, true))
+        } else {
+            match lookup_type(conn, target.schema.as_deref(), &target.name) {
+                Some(TypeFound::Custom) => None,
+                Some(TypeFound::RowType(row)) => Some((row, false)),
+                // `_t`, as the catalog names the array type of `t`.
+                None => target
+                    .name
+                    .strip_prefix('_')
+                    .and_then(|element| row_type_of(conn, &target, element))
+                    .map(|row| (row, true)),
+            }
+        };
+        if let Some((row, is_array)) = found {
+            return Err(row_type_error(conn, &target, row, is_array));
+        }
+    }
+    Ok(())
+}
+
+/// What a type name resolves to, in PostgreSQL's order: pg_catalog first,
+/// then the schema or the search path, the first namespace that has a type
+/// of that name deciding.
+enum TypeFound {
+    /// A custom type, dropped as before.
+    Custom,
+    RowType(RowType),
+}
+
+/// The row type of a relation.
+struct RowType {
+    /// The relation's name, as stored.
+    name: String,
+    /// Where the relation is; `None` for a catalog relation.
+    namespace: Option<Qualifier>,
+    owner: RowTypeOwner,
+}
+
+/// What a row type belongs to.
+enum RowTypeOwner {
+    /// A catalog table: the type belongs to the system.
+    System,
+    /// A relation of this kind: "table", "view" or "materialized view".
+    Relation(&'static str),
+}
+
+fn lookup_type(conn: &Arc<Connection>, schema: Option<&str>, name: &str) -> Option<TypeFound> {
+    let in_catalog = schema.is_none_or(|schema| schema.eq_ignore_ascii_case("pg_catalog"));
+    if in_catalog && is_catalog_relation_name(name) {
+        let owner = if is_catalog_view_name(name) {
+            RowTypeOwner::Relation("view")
+        } else {
+            RowTypeOwner::System
+        };
+        return Some(TypeFound::RowType(RowType {
+            name: name.to_ascii_lowercase(),
+            namespace: None,
+            owner,
+        }));
+    }
+    relation_lookup_namespaces(conn, schema)
+        .into_iter()
+        .find_map(|namespace| {
+            conn.with_schema(namespace.database_id(), |s| {
+                let ns = namespace.target.id;
+                if s.get_type_def_unchecked(name).is_some() {
+                    return Some(TypeFound::Custom);
+                }
+                let kind = if s.is_materialized_view(ns, name) {
+                    "materialized view"
+                } else if s.get_view(ns, name).is_some() {
+                    "view"
+                } else if s.get_table(ns, name).is_some() {
+                    "table"
+                } else {
+                    return None;
+                };
+                Some(TypeFound::RowType(RowType {
+                    name: name.to_string(),
+                    namespace: Some(namespace.clone()),
+                    owner: RowTypeOwner::Relation(kind),
+                }))
+            })
+        })
+}
+
+/// The row type `name` resolves to under `target`'s schema, if any.
+fn row_type_of(
+    conn: &Arc<Connection>,
+    target: &turso_pg_parser::translator::DropTypeTarget,
+    name: &str,
+) -> Option<RowType> {
+    match lookup_type(conn, target.schema.as_deref(), name)? {
+        TypeFound::RowType(row) => Some(row),
+        TypeFound::Custom => None,
+    }
+}
+
+/// The error of a DROP TYPE or DROP DOMAIN of the row type `row`, or of its
+/// array type.
+fn row_type_error(
+    conn: &Arc<Connection>,
+    target: &turso_pg_parser::translator::DropTypeTarget,
+    row: RowType,
+    is_array: bool,
+) -> LimboError {
+    if target.domain {
+        // PostgreSQL names the domain as written.
+        let mut written = target
+            .schema
+            .iter()
+            .map(|schema| format!("{schema}."))
+            .collect::<String>();
+        written.push_str(&target.name);
+        written.push_str(&"[]".repeat(target.array_bounds));
+        return sqlstate_error(
+            SQLSTATE_WRONG_OBJECT_TYPE,
+            format!("\"{written}\" is not a domain"),
+            None,
+        );
+    }
+    // PostgreSQL names a type with its schema when the name alone would not
+    // find it.
+    let visible = match &row.namespace {
+        None => true,
+        Some(namespace) => matches!(
+            lookup_type(conn, None, &row.name),
+            Some(TypeFound::RowType(RowType { namespace: Some(found), .. })) if found == *namespace
+        ),
+    };
+    let type_name = match &row.namespace {
+        Some(namespace) if !visible => format!("{}.{}", namespace.name, row.name),
+        _ => row.name.clone(),
+    };
+    match (is_array, row.owner) {
+        (_, RowTypeOwner::System) => {
+            let shown = if is_array {
+                format!("{type_name}[]")
+            } else {
+                type_name
+            };
+            crate::error::type_required(&shown, None)
+        }
+        (true, RowTypeOwner::Relation(_)) => crate::error::type_required(
+            &format!("{type_name}[]"),
+            Some(&format!("type {type_name}")),
+        ),
+        (false, RowTypeOwner::Relation(kind)) => {
+            crate::error::type_required(&type_name, Some(&format!("{kind} {type_name}")))
+        }
+    }
 }
 
 /// The namespaces that a relation is looked up in, in order. A relation

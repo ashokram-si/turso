@@ -85,8 +85,29 @@ pub fn several_dropped_objects_have_dependents(error: LimboError) -> LimboError 
     }))
 }
 
-/// The engine error for SQL that `turso_pg_parser::parse` refuses, which
-/// keeps the SQLSTATE that the parser gave it.
+/// The error of a DROP TYPE of a type that `owner` needs, such as the row
+/// type of a table (`table t`), with the hint to drop `owner` instead. With
+/// no owner the type belongs to the system, as a catalog table's row type
+/// does.
+pub fn type_required(type_name: &str, owner: Option<&str>) -> LimboError {
+    let (message, hint) = match owner {
+        None => (
+            format!("cannot drop type {type_name} because it is required by the database system"),
+            None,
+        ),
+        Some(owner) => (
+            format!("cannot drop type {type_name} because {owner} requires it"),
+            Some(format!("You can drop {owner} instead.")),
+        ),
+    };
+    LimboError::Dialect(Box::new(DialectError {
+        code: SQLSTATE_DEPENDENT_OBJECTS_STILL_EXIST,
+        message,
+        detail: None,
+        hint,
+    }))
+}
+
 /// The error of a DROP that names a relation of another kind than the one
 /// it drops, with the DROP statement that removes that kind.
 pub fn wrong_relation_kind(name: &str, expected_kind: &str, kind: &str) -> LimboError {
@@ -101,6 +122,8 @@ pub fn wrong_relation_kind(name: &str, expected_kind: &str, kind: &str) -> Limbo
     }))
 }
 
+/// The engine error for SQL that `turso_pg_parser::parse` refuses, which
+/// keeps the SQLSTATE that the parser gave it.
 pub fn sql_parse_error(error: turso_pg_parser::ParseError) -> LimboError {
     match error {
         turso_pg_parser::ParseError::Sqlstate { sqlstate, message } => {
