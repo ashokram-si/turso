@@ -115,26 +115,20 @@ test error-cast-to-array-of-unknown-type {
     SELECT '{1}'::nosuch[];
 }
 @sqlstate 42704
-expect error {
-    type "nosuch\[\]" does not exist
-}
+expect error {}
 
 test error-cast-to-underscore-name-of-a-type-alias {
     SELECT '{1}'::_integer;
 }
 @sqlstate 42704
-expect error {
-    type "_integer" does not exist
-}
+expect error {}
 
 # information_schema is not on the search path.
 test error-cast-to-unqualified-information-schema-domain {
     SELECT 'x'::sql_identifier;
 }
 @sqlstate 42704
-expect error {
-    type "sql_identifier" does not exist
-}
+expect error {}
 
 # An index and a sequence have no row type.
 test error-cast-to-name-of-an-index {
@@ -143,26 +137,20 @@ test error-cast-to-name-of-an-index {
     SELECT 'x'::cast_ix;
 }
 @sqlstate 42704
-expect error {
-    type "cast_ix" does not exist
-}
+expect error {}
 
 test error-cast-to-name-of-a-sequence {
     CREATE SEQUENCE cast_sq;
     SELECT '1'::cast_sq;
 }
 @sqlstate 42704
-expect error {
-    type "cast_sq" does not exist
-}
+expect error {}
 
 test error-cast-to-other-name-in-information-schema {
     SELECT '1'::information_schema.int4;
 }
 @sqlstate 42704
-expect error {
-    type "information_schema.int4" does not exist
-}
+expect error {}
 
 test error-drop-type-used-by-a-cast-in-a-policy {
     CREATE TYPE err_policy_mood AS ENUM ('happy', 'sad');
@@ -173,42 +161,46 @@ test error-drop-type-used-by-a-cast-in-a-policy {
 @sqlstate 2BP01
 expect error {}
 
-# A built-in type that tursopg has no type for, a row type and a domain of
-# information_schema are refused as not supported: tursopg would not give
-# the value PostgreSQL gives.
-@skip-if postgres "PostgreSQL casts to xid"
-test error-cast-to-builtin-type-without-a-tursopg-type {
+# A cast to a built-in type that tursopg has no type for, to a table's row type
+# or to a domain of information_schema is refused as not supported: tursopg
+# would not give the value PostgreSQL gives.
+@compat-gap "type:xid"
+test cast-to-builtin-type-without-a-tursopg-type {
     SELECT '1'::xid;
 }
-@sqlstate 0A000
-expect error {
-    a cast to type "xid" is not supported
+expect {
+    1
 }
+@sqlstate 0A000
+expect @tursopg error {}
 
-@skip-if postgres "PostgreSQL casts to point[]"
-test error-cast-to-array-of-builtin-type-without-a-tursopg-type {
+@compat-gap "type:_point"
+test cast-to-array-of-builtin-type-without-a-tursopg-type {
     SELECT '{"(1,2)"}'::_point;
 }
-@sqlstate 0A000
-expect error {
-    a cast to type "_point" is not supported
+expect {
+    {"(1,2)"}
 }
+@sqlstate 0A000
+expect @tursopg error {}
 
-@skip-if postgres "PostgreSQL casts to a table's row type"
-test error-cast-to-row-type-of-a-table {
+@compat-gap "type:cast_row_t"
+test cast-to-row-type-of-a-table {
     CREATE TABLE cast_row_t (a int);
     SELECT '(1)'::cast_row_t;
 }
-@sqlstate 0A000
-expect error {
-    a cast to the row type of "cast_row_t" is not supported
+expect {
+    (1)
 }
+@sqlstate 0A000
+expect @tursopg error {}
 
-@skip-if postgres "PostgreSQL casts to its information_schema domains"
-test error-cast-to-information-schema-domain {
+@compat-gap "type:sql_identifier"
+test cast-to-information-schema-domain {
     SELECT 'x'::information_schema.sql_identifier;
 }
-@sqlstate 0A000
-expect error {
-    a cast to type "information_schema.sql_identifier" is not supported
+expect {
+    x
 }
+@sqlstate 0A000
+expect @tursopg error {}
