@@ -6295,8 +6295,9 @@ pub struct SequenceOptions {
 
 impl SequenceOptions {
     /// The options of a sequence of the type `data_type`, or of the type an `AS`
-    /// option names. INCREMENT, the bounds and START are checked by core
-    /// (`Sequence::new`), when it creates the sequence.
+    /// option names. A non-zero INCREMENT, MINVALUE below MAXVALUE and START
+    /// within the bounds are checked by core (`Sequence::new`), when it creates
+    /// the sequence.
     pub fn new(
         options: &[pg_query::protobuf::Node],
         data_type: Option<&str>,
@@ -6307,7 +6308,8 @@ impl SequenceOptions {
         let mut seen = std::collections::HashSet::new();
         let mut as_type_name = None;
         // The options with a number, read after the loop in the order
-        // PostgreSQL reads them, so that the first error is the one it reports.
+        // PostgreSQL reads them, so that of several numbers that can't be read,
+        // the one PostgreSQL reports comes first.
         let (mut start_elem, mut increment_elem, mut min_elem, mut max_elem, mut cache_elem) =
             (None, None, None, None, None);
         for opt_node in options {
