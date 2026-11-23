@@ -426,15 +426,11 @@ test write-in-read-only-transaction {
 expect error {}
 
 # D-44: unknown type in cast
-@compat-gap "syntax:type-name"
 test unknown-type-in-cast {
     SELECT 1::nosuchtype;
 }
 @sqlstate 42704
 expect error {}
-expect @tursopg {
-    1
-}
 
 # D-45: wrong arg type to function
 @compat-gap "function:lower"
