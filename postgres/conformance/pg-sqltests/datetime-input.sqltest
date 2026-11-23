@@ -3,6 +3,7 @@
 
 @database :memory:
 
+@compat-gap "type:date"
 test datetime-input-postgresql-forms {
     CREATE TABLE t (id int, d date, tm time, ts timestamp, tz timestamptz);
     INSERT INTO t VALUES (1, '2024-1-5', '9:30', '2024-1-5 10:00', '2024-1-5 10:00+00');
@@ -17,14 +18,24 @@ expect {
     3|2024-01-05|00:00:00|2024-01-05 10:00:00|2024-01-05 04:30:00+00
     4|2024-01-05|00:00:00|2024-01-05 10:00:00|2024-01-05 15:00:00+00
 }
+@sqlstate 0A000
+expect @tursopg error {
+    type "date" is not supported
+}
 
+@compat-gap "type:date"
 test datetime-input-cast {
     SELECT '2024-1-5'::date, '9:30'::time, '2024-1-5 10:00'::timestamp;
 }
 expect {
     2024-01-05|09:30:00|2024-01-05 10:00:00
 }
+@sqlstate 0A000
+expect @tursopg error {
+    type "date" is not supported
+}
 
+@compat-gap "type:time"
 test datetime-input-keeps-microseconds {
     CREATE TABLE t (id int, tm time, ts timestamp, tz timestamptz);
     INSERT INTO t VALUES (1, '10:00:00.123456', '2024-01-05 10:00:00.123456', '2024-01-05 10:00:00.123456+00:00');
@@ -37,7 +48,12 @@ expect {
     2|10:00:00.0005|2024-01-05 10:00:00.0005|2024-01-05 10:00:00.5+00
     3|10:00:00.000002|2024-01-05 10:00:00.123458|2024-01-06 00:00:00+00
 }
+@sqlstate 0A000
+expect @tursopg error {
+    type "time" is not supported
+}
 
+@compat-gap "type:time"
 test datetime-input-unique-microseconds {
     CREATE TABLE u (id int, tm time UNIQUE, ts timestamp UNIQUE);
     INSERT INTO u VALUES (1, '10:00:00', '2024-01-05 10:00:00');
@@ -47,7 +63,12 @@ test datetime-input-unique-microseconds {
 expect {
     2
 }
+@sqlstate 0A000
+expect @tursopg error {
+    type "time" is not supported
+}
 
+@compat-gap "type:time"
 test datetime-input-offsets {
     CREATE TABLE t (id int, tm time, ts timestamp, tz timestamptz);
     INSERT INTO t VALUES (1, '10:00:00+02:00', '2024-01-05 10:00:00+02:00', '2024-01-05 10:00:00+02:00');
@@ -58,7 +79,21 @@ expect {
     1|10:00:00|2024-01-05 10:00:00|2024-01-05 08:00:00+00
     2|10:00:00|2024-01-05 01:00:00|2024-01-04 23:00:00+00
 }
+@sqlstate 0A000
+expect @tursopg error {
+    type "time" is not supported
+}
 
+test datetime-input-timestamptz-without-offset {
+    CREATE TABLE t (tz timestamptz);
+    INSERT INTO t VALUES ('2024-01-05 10:00');
+    SELECT tz FROM t;
+}
+expect {
+    2024-01-05 10:00:00+00
+}
+
+@compat-gap "type:time"
 test datetime-input-midnight-and-leap-second-carry {
     CREATE TABLE t (id int, tm time, ts timestamp);
     INSERT INTO t VALUES (1, '24:00:00', '2024-01-05 24:00:00');
@@ -71,13 +106,23 @@ expect {
     2|24:00:00|2025-01-01 00:00:00
     3|10:01:00|2024-01-05 10:01:00
 }
+@sqlstate 0A000
+expect @tursopg error {
+    type "time" is not supported
+}
 
+@compat-gap "type:date"
 test datetime-input-rejects-feb-30 {
     CREATE TABLE t (d date);
     INSERT INTO t VALUES ('2024-02-30');
 }
+@sqlstate 22008
 expect error {
     date/time field value out of range: "2024-02-30"
+}
+@sqlstate 0A000
+expect @tursopg error {
+    type "date" is not supported
 }
 
 test datetime-input-rejects-feb-29-in-non-leap-year {
@@ -96,6 +141,7 @@ expect error {
     date/time field value out of range: "2024-01-05 24:00:01"
 }
 
+@compat-gap "type:date"
 test datetime-input-accepts-second-60-as-next-day {
     CREATE TABLE t(id INTEGER PRIMARY KEY, d date, ts timestamp, tz timestamptz);
     INSERT INTO t VALUES (1, '2024-01-05 23:59:60', '2024-01-05 23:59:60', '2024-01-05 23:59:60');
@@ -103,6 +149,10 @@ test datetime-input-accepts-second-60-as-next-day {
 }
 expect {
     1|2024-01-05|2024-01-06 00:00:00|2024-01-06 00:00:00+00
+}
+@sqlstate 0A000
+expect @tursopg error {
+    type "date" is not supported
 }
 
 test datetime-input-rejects-fraction-past-midnight-timestamp-23-59-60-5 {
@@ -113,12 +163,18 @@ expect error {
     date/time field value out of range: "2024-01-05 23:59:60.5"
 }
 
+@compat-gap "type:date"
 test datetime-input-rejects-fraction-past-midnight-date-23-59-60-5 {
     CREATE TABLE t(d date);
     INSERT INTO t VALUES ('2024-01-05 23:59:60.5');
 }
+@sqlstate 22008
 expect error {
     date/time field value out of range: "2024-01-05 23:59:60.5"
+}
+@sqlstate 0A000
+expect @tursopg error {
+    type "date" is not supported
 }
 
 test datetime-input-rejects-fraction-past-midnight-timestamptz-23-59-60-5 {
@@ -145,6 +201,7 @@ expect error {
     date/time field value out of range: "2024-01-05 24:00:00.1"
 }
 
+@compat-gap "type:time"
 test datetime-time-input-accepts-iso-date-before-time {
     CREATE TABLE t(id INTEGER PRIMARY KEY, tm time);
     INSERT INTO t VALUES (1, '2024-01-05 10:00');
@@ -159,57 +216,94 @@ expect {
     3|10:00:00
     4|10:00:00
 }
+@sqlstate 0A000
+expect @tursopg error {
+    type "time" is not supported
+}
 
+@compat-gap "type:time"
 test datetime-time-input-rejects-date-form-1 {
     CREATE TABLE t(tm time);
     INSERT INTO t VALUES ('Jan 5 2024 10:00');
 }
+@sqlstate 22007
 expect error {
     invalid input syntax for type time: "Jan 5 2024 10:00"
 }
+@sqlstate 0A000
+expect @tursopg error {
+    type "time" is not supported
+}
 
+@compat-gap "type:time"
 test datetime-time-input-rejects-date-form-2 {
     CREATE TABLE t(tm time);
     INSERT INTO t VALUES ('10:00 Jan 5 2024');
 }
+@sqlstate 22007
 expect error {
     invalid input syntax for type time: "10:00 Jan 5 2024"
 }
+@sqlstate 0A000
+expect @tursopg error {
+    type "time" is not supported
+}
 
+@compat-gap "type:time"
 test datetime-time-input-rejects-date-form-3 {
     CREATE TABLE t(tm time);
     INSERT INTO t VALUES ('2024-01-05T10:00');
 }
+@sqlstate 22007
 expect error {
     invalid input syntax for type time: "2024-01-05T10:00"
 }
+@sqlstate 0A000
+expect @tursopg error {
+    type "time" is not supported
+}
 
+@compat-gap "type:time"
 test datetime-time-input-rejects-date-form-4 {
     CREATE TABLE t(tm time);
     INSERT INTO t VALUES ('10:00 2024-01-05');
 }
+@sqlstate 22007
 expect error {
     invalid input syntax for type time: "10:00 2024-01-05"
 }
+@sqlstate 0A000
+expect @tursopg error {
+    type "time" is not supported
+}
 
+@compat-gap "type:time"
 test datetime-time-input-rejects-date-form-5 {
     CREATE TABLE t(tm time);
     INSERT INTO t VALUES ('20240105 10:00');
 }
+@sqlstate 22007
 expect error {
     invalid input syntax for type time: "20240105 10:00"
+}
+@sqlstate 0A000
+expect @tursopg error {
+    type "time" is not supported
 }
 
 # PostgreSQL accepts the values below. Turso stores these types as text that
 # must sort in time order, which these values would not, so it rejects them.
 
-@skip-if postgres "PostgreSQL accepts BC dates"
+@compat-gap "type:date"
 test datetime-input-rejects-bc {
     CREATE TABLE t (d date);
     INSERT INTO t VALUES ('0044-03-15 BC');
 }
-expect error {
-    BC dates are not supported for type date
+expect {
+}
+@sqlstate 0A000
+expect @tursopg error {
+    type "date" is not supported
 }
 
 @skip-if postgres "PostgreSQL accepts years past 9999"
@@ -248,16 +342,15 @@ expect error {
 # seeks an index.
 
 setup datetime-compare-no-index {
-    CREATE TABLE c (id int, d date, ts timestamp, tz timestamptz);
-    INSERT INTO c VALUES (1, '2024-01-05', '2024-01-05 10:00:00', '2024-01-05 10:00:00');
+    CREATE TABLE c (id int, ts timestamp, tz timestamptz);
+    INSERT INTO c VALUES (1, '2024-01-05 10:00:00', '2024-01-05 10:00:00');
 }
 
 setup datetime-compare-index {
-    CREATE TABLE c (id int, d date, ts timestamp, tz timestamptz);
-    CREATE INDEX c_d ON c (d);
+    CREATE TABLE c (id int, ts timestamp, tz timestamptz);
     CREATE INDEX c_ts ON c (ts);
     CREATE INDEX c_tz ON c (tz);
-    INSERT INTO c VALUES (1, '2024-01-05', '2024-01-05 10:00:00', '2024-01-05 10:00:00');
+    INSERT INTO c VALUES (1, '2024-01-05 10:00:00', '2024-01-05 10:00:00');
 }
 
 @setup datetime-compare-no-index
@@ -324,20 +417,33 @@ expect {
     1
 }
 
-@setup datetime-compare-no-index
+@compat-gap "type:date"
 test datetime-compare-date-month-name-scan {
+    CREATE TABLE c (id int, d date);
+    INSERT INTO c VALUES (1, '2024-01-05');
     SELECT id FROM c WHERE d >= 'Jan 5 2024';
 }
 expect {
     1
+}
+@sqlstate 0A000
+expect @tursopg error {
+    type "date" is not supported
 }
 
-@setup datetime-compare-index
+@compat-gap "type:date"
 test datetime-compare-date-month-name-index {
+    CREATE TABLE c (id int, d date);
+    CREATE INDEX c_d ON c (d);
+    INSERT INTO c VALUES (1, '2024-01-05');
     SELECT id FROM c WHERE d >= 'Jan 5 2024';
 }
 expect {
     1
+}
+@sqlstate 0A000
+expect @tursopg error {
+    type "date" is not supported
 }
 
 # With the session time zone UTC, a timestamp equals the timestamptz of the
@@ -385,6 +491,7 @@ expect {
     11|2024-01-05 22:00:00
 }
 
+@compat-gap "type:time"
 test datetime-input-time-with-t {
     CREATE TABLE t(id int, tm time);
     INSERT INTO t VALUES (1, 'T 10:00'), (2, 'T10:00 PM'), (3, '2024-01-05 10:00');
@@ -394,6 +501,10 @@ expect {
     1|10:00:00
     2|22:00:00
     3|10:00:00
+}
+@sqlstate 0A000
+expect @tursopg error {
+    type "time" is not supported
 }
 
 test datetime-input-rejects-order-2024-01-05t {
@@ -468,18 +579,129 @@ expect error {
     invalid input syntax for type timestamp: "2024-01-05 T T10:00"
 }
 
+@compat-gap "type:date"
 test datetime-input-rejects-order-date-after-time {
     CREATE TABLE t(d date);
     INSERT INTO t VALUES ('10:00 2024-01-05');
 }
+@sqlstate 22007
 expect error {
     invalid input syntax for type date: "10:00 2024-01-05"
 }
+@sqlstate 0A000
+expect @tursopg error {
+    type "date" is not supported
+}
 
+@compat-gap "type:time"
 test datetime-input-rejects-order-time-after-am-pm-and-date {
     CREATE TABLE t(tm time);
     INSERT INTO t VALUES ('2024-01-05 PM 10:00');
 }
+@sqlstate 22007
 expect error {
     invalid input syntax for type time: "2024-01-05 PM 10:00"
+}
+@sqlstate 0A000
+expect @tursopg error {
+    type "time" is not supported
+}
+
+# A timestamp compared with a timestamptz fails in tursopg, where PostgreSQL
+# reads the timestamp as a timestamptz in the session time zone. Stored
+# timestamps and timestamptz values are different texts, so comparing them
+# as stored would give wrong rows;
+# no rule says how one converts into the other, so the comparison is refused
+# whichever way the query is run.
+
+setup datetime-compare-ts-tz {
+    CREATE TABLE a (id int, ts timestamp);
+    CREATE TABLE b (id int, tz timestamptz);
+    INSERT INTO a VALUES (1, '2024-01-05 09:00:00'), (2, '2024-01-05 10:00:00'), (3, '2024-01-05 11:00:00');
+    INSERT INTO b VALUES (1, '2024-01-05 10:00:00+00'), (2, '2024-01-05 12:00:00+02');
+}
+
+@compat-gap "operator:timestamp = timestamptz"
+@setup datetime-compare-ts-tz
+test datetime-compare-timestamp-eq-timestamptz-scan {
+    SELECT a.id, b.id FROM a, b WHERE a.ts = b.tz ORDER BY a.id, b.id;
+}
+expect {
+    2|1
+    2|2
+}
+@sqlstate 0A000
+expect @tursopg error {
+    cannot compare type timestamp with type timestamptz
+}
+
+@compat-gap "operator:timestamp UNION timestamptz"
+@setup datetime-compare-ts-tz
+test datetime-result-union {
+    SELECT ts FROM a UNION SELECT tz FROM b ORDER BY 1;
+}
+expect {
+    2024-01-05 09:00:00+00
+    2024-01-05 10:00:00+00
+    2024-01-05 11:00:00+00
+}
+@sqlstate 0A000
+expect @tursopg error {
+    cannot compare type timestamp with type timestamptz
+}
+
+# PostgreSQL has no operator that compares a timestamptz with a varchar.
+# tursopg does not know which type pairs PostgreSQL compares, so it refuses
+# every comparison of two different custom types with 0A000.
+@compat-gap "operator:timestamptz = varchar"
+test datetime-compare-timestamptz-eq-varchar-is-an-error {
+    CREATE TABLE tv (tz timestamptz, v varchar(40));
+    INSERT INTO tv VALUES ('2024-01-05 02:00:00+02', '2024-01-05 02:00:00+02');
+    SELECT tz = v FROM tv;
+}
+@sqlstate 42883
+expect error {
+    operator does not exist
+}
+@sqlstate 0A000
+expect @tursopg error {
+    cannot compare type timestamptz with type varchar
+}
+
+# lag's result is one type in PostgreSQL: the timestamp rows convert to
+# timestamptz, in the session time zone (UTC). tursopg refuses a result column
+# that mixes the two types.
+@compat-gap "function:lag"
+test datetime-lag-timestamp-with-timestamptz-default {
+    CREATE TABLE lg (i int, ts timestamp, tz timestamptz);
+    INSERT INTO lg VALUES (1, '2024-01-01 00:00:00', '2024-06-01 00:00:00+00');
+    INSERT INTO lg VALUES (2, '2024-01-02 00:00:00', '2024-06-02 00:00:00+00');
+    SELECT lag(ts, 1, tz) OVER (ORDER BY i) FROM lg ORDER BY i;
+}
+expect {
+    2024-06-01 00:00:00+00
+    2024-01-01 00:00:00+00
+}
+@sqlstate 0A000
+expect @tursopg error {
+    cannot compare type timestamp with type timestamptz
+}
+
+# lead's result is one type in PostgreSQL: the timestamp rows convert to
+# timestamptz, in the session time zone (UTC). tursopg refuses a result column
+# that mixes the two types.
+@compat-gap "function:lead"
+test datetime-lead-timestamp-with-timestamptz-default {
+    CREATE TABLE ld (i int, ts timestamp, tz timestamptz);
+    INSERT INTO ld VALUES (1, '2024-01-01 00:00:00', '2024-06-01 00:00:00+00');
+    INSERT INTO ld VALUES (2, '2024-01-02 00:00:00', '2024-06-02 00:00:00+00');
+    SELECT lead(ts, 1, tz) OVER (ORDER BY i) FROM ld ORDER BY i;
+}
+expect {
+    2024-01-02 00:00:00+00
+    2024-06-02 00:00:00+00
+}
+@sqlstate 0A000
+expect @tursopg error {
+    cannot compare type timestamp with type timestamptz
 }

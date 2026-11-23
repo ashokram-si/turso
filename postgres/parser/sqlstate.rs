@@ -1,6 +1,7 @@
 //! SQLSTATE codes of PostgreSQL errors, from Appendix A of the PostgreSQL
 //! documentation.
 
+pub const SQLSTATE_PROTOCOL_VIOLATION: &str = "08P01";
 pub const SQLSTATE_FEATURE_NOT_SUPPORTED: &str = "0A000";
 pub const SQLSTATE_INVALID_GRANT_OPERATION: &str = "0LP01";
 pub const SQLSTATE_CARDINALITY_VIOLATION: &str = "21000";
@@ -59,6 +60,7 @@ pub const SQLSTATE_DISK_FULL: &str = "53100";
 pub const SQLSTATE_OUT_OF_MEMORY: &str = "53200";
 pub const SQLSTATE_STATEMENT_TOO_COMPLEX: &str = "54001";
 pub const SQLSTATE_OBJECT_NOT_IN_PREREQUISITE_STATE: &str = "55000";
+pub const SQLSTATE_OBJECT_IN_USE: &str = "55006";
 pub const SQLSTATE_LOCK_NOT_AVAILABLE: &str = "55P03";
 pub const SQLSTATE_QUERY_CANCELED: &str = "57014";
 pub const SQLSTATE_RAISE_EXCEPTION: &str = "P0001";

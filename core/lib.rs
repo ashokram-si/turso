@@ -109,9 +109,7 @@ use crate::{
     busy::{BusyHandler, BusyHandlerCallback},
     index_method::IndexMethod,
     schema::Trigger,
-    storage::encryption::AtomicCipherMode,
     sync::{atomic::AtomicBool, Arc, RwLock},
-    translate::emitter::TransactionMode,
     vdbe::metrics::ConnectionMetrics,
 };
 pub use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -119,6 +117,7 @@ use schema::Schema;
 use std::time::Duration;
 use storage::sqlite3_ondisk::PageSize;
 use tracing::instrument;
+pub use translate::emitter::TransactionMode;
 use turso_macros::AtomicEnum;
 use turso_parser::{ast, ast::Cmd};
 
@@ -145,9 +144,14 @@ pub use database::{
 pub(crate) use database::{DatabaseCatalog, InitState};
 #[cfg(test)]
 pub(crate) use database::{DatabaseKey, RegistryEntry, DATABASE_MANAGER};
-#[cfg(test)]
-pub(crate) use dialect::EngineDialect;
-pub use dialect::{CatalogChange, Dialect, NewOwner, OwnerColumn};
+pub use dialect::{
+    AccessStatement, AddColumn, AlterColumn, AutomaticIndex, Catalog, CatalogApply, CatalogCmd,
+    CmdContext, CmdOrigin, CreateIndex, CreateMaterializedView, CreateSequence, CreateTable,
+    CreateView, Dependent, DependentObject, Dialect, DropColumn, DropIndex, DropSequence,
+    DropTable, DropView, NewOwner, OwnerColumn, RelationName, RenameColumn, RenameTable,
+    RewrittenTrigger, RewrittenView, SqliteCatalog, StatementTimes, TableText,
+    TempTriggerOfRenamedTable,
+};
 pub use error::{
     io_error, CompletionError, ConstraintKind, ConstraintViolation, DialectError, LimboError,
     SQLITE_CONSTRAINT_UNIQUE, SQLITE_ERROR,
@@ -175,7 +179,9 @@ pub use io::{
 pub use namespace::{NamespaceId, NamespaceRef, Qualifier, Qualifiers};
 pub use numeric::{nonnan::NonNan, Numeric};
 pub use security::roles::SessionRole;
-pub use statement::{ColumnTypeInfo, ColumnTypeKind, Statement, StatementStatusCounter};
+pub use statement::{
+    ColumnOrigin, ColumnTypeInfo, ColumnTypeKind, Statement, StatementStatusCounter,
+};
 pub use storage::{
     buffer_pool::BufferPool,
     database::{DatabaseStorage, IOContext},
