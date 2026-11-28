@@ -518,20 +518,24 @@ impl Dialect for PostgresDialect {
 
     /// PostgreSQL drops each column that SQLite refuses, with the constraints and
     /// indexes on it; the engine cannot, so each refusal is reported as not supported.
-    fn drop_column_refused(
-        &self,
-        _table: &str,
-        column: &str,
-        refusal: DropColumnRefusal,
-    ) -> LimboError {
+    fn drop_column_refused(&self, column: &str, refusal: DropColumnRefusal<'_>) -> LimboError {
         let what = match refusal {
-            // FIXME(pg-depend): PostgreSQL drops a PRIMARY KEY or UNIQUE constraint, and its
-            // index, with a column it covers, as pg_depend records. The engine refuses to drop a
-            // column that such a constraint covers. An engine that drops the constraint with the
-            // column replaces the PRIMARY KEY and UNIQUE arms.
+            // FIXME(pg-depend): PostgreSQL drops the indexes and the table's own constraints
+            // (PRIMARY KEY, UNIQUE, CHECK, FOREIGN KEY) that use a column with the column, as
+            // pg_depend records. The engine refuses to drop a column that one of them uses. An
+            // engine that drops them with the column replaces these arms.
             DropColumnRefusal::PrimaryKey => "dropping a PRIMARY KEY column",
-            DropColumnRefusal::Unique | DropColumnRefusal::InTableUnique => {
+            DropColumnRefusal::Unique | DropColumnRefusal::InTableUnique { .. } => {
                 "dropping a column with a UNIQUE constraint"
+            }
+            DropColumnRefusal::Indexed { .. }
+            | DropColumnRefusal::InIndexExpression { .. }
+            | DropColumnRefusal::InPartialIndex => "dropping a column that an index uses",
+            DropColumnRefusal::InTableCheck { .. } => {
+                "dropping a column that a CHECK constraint uses"
+            }
+            DropColumnRefusal::InForeignKey { .. } => {
+                "dropping a column of a FOREIGN KEY constraint"
             }
             // FIXME(pg-empty-tables): PostgreSQL drops a table's only column and keeps the table
             // with no columns. The engine refuses to drop the last column. An engine that can

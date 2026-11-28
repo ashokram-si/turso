@@ -747,26 +747,26 @@ pub fn translate_alter_table(
                 .iter()
                 .flat_map(|set| &set.columns)
                 .find(|key| normalize_ident(&key.name) == col_normalized);
-            let (table, column, refusal) = if column.primary_key() {
-                (table_name, column_name, Some(DropColumnRefusal::PrimaryKey))
-            } else if column.unique() {
-                (table_name, column_name, Some(DropColumnRefusal::Unique))
-            } else if btree.columns().len() == 1 {
-                (table_name, column_name, Some(DropColumnRefusal::OnlyColumn))
-            } else if let Some(key) = in_table_unique {
-                (
-                    btree.declared_name.as_str(),
-                    key.name.as_str(),
-                    Some(DropColumnRefusal::InTableUnique),
-                )
-            } else {
-                (table_name, column_name, None)
-            };
-            if let Some(refusal) = refusal {
-                return Err(resolver
+            let refuse = |refusal: DropColumnRefusal<'_>| {
+                resolver
                     .catalog
                     .dialect
-                    .drop_column_refused(table, column, refusal));
+                    .drop_column_refused(column_name, refusal)
+            };
+            let refusal = if column.primary_key() {
+                Some(DropColumnRefusal::PrimaryKey)
+            } else if column.unique() {
+                Some(DropColumnRefusal::Unique)
+            } else if btree.columns().len() == 1 {
+                Some(DropColumnRefusal::OnlyColumn)
+            } else {
+                in_table_unique.map(|key| DropColumnRefusal::InTableUnique {
+                    table: btree.declared_name.as_str(),
+                    column: key.name.as_str(),
+                })
+            };
+            if let Some(refusal) = refusal {
+                return Err(refuse(refusal));
             }
 
             for index in table_indexes.iter() {
@@ -777,19 +777,19 @@ pub fn translate_alter_table(
                     .enumerate()
                     .find(|(_, col)| col.pos_in_table == dropped_index);
                 if let Some((pos_in_index, indexed_col)) = maybe_indexed_col {
-                    return Err(LimboError::ParseError(format!(
-                        "cannot drop column \"{column_name}\": it is referenced in the index {}; position in index is {pos_in_index}, position in table is {}",
-                        index.name, indexed_col.pos_in_table
-                    )));
+                    return Err(refuse(DropColumnRefusal::Indexed {
+                        index: &index.name,
+                        position_in_index: pos_in_index,
+                        position_in_table: indexed_col.pos_in_table,
+                    }));
                 }
                 // Referenced in expression index
                 for idx_col in &index.columns {
                     if let Some(expr) = &idx_col.expr {
                         if check_expr_references_column(expr, &col_normalized) {
-                            return Err(LimboError::ParseError(format!(
-                                "error in index {} after drop column: no such column: {column_name}",
-                                index.name
-                            )));
+                            return Err(refuse(DropColumnRefusal::InIndexExpression {
+                                index: &index.name,
+                            }));
                         }
                     }
                 }
@@ -842,9 +842,7 @@ pub fn translate_alter_table(
                         },
                     )?;
                     if column_referenced {
-                        return Err(LimboError::ParseError(format!(
-                            "cannot drop column \"{column_name}\": indexed"
-                        )));
+                        return Err(refuse(DropColumnRefusal::InPartialIndex));
                     }
                 }
             }
@@ -859,9 +857,9 @@ pub fn translate_alter_table(
                 }
                 // Table-level constraint: check if it references the dropped column
                 if check_expr_references_column(&check.expr, &col_normalized) {
-                    return Err(LimboError::ParseError(format!(
-                        "error in table {table_name} after drop column: no such column: {column_name}"
-                    )));
+                    return Err(refuse(DropColumnRefusal::InTableCheck {
+                        table: table_name,
+                    }));
                 }
             }
             // Remove column-level CHECK constraints for the dropped column
@@ -876,9 +874,9 @@ pub fn translate_alter_table(
             let column_name_norm = normalize_ident(column_name);
             for fk in &btree.foreign_keys {
                 if fk.child_columns.contains(&column_name_norm) {
-                    return Err(LimboError::ParseError(format!(
-                        "error in table {table_name} after drop column: unknown column \"{column_name}\" in foreign key definition"
-                    )));
+                    return Err(refuse(DropColumnRefusal::InForeignKey {
+                        table: table_name,
+                    }));
                 }
             }
 

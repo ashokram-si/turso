@@ -1272,3 +1272,62 @@ expect {
 }
 @sqlstate 0A000
 expect @tursopg error {}
+
+# E-121: DROP COLUMN of an indexed column
+@compat-gap "syntax:alter-table"
+test drop-column-an-indexed-column {
+    CREATE TABLE t_indexed (a int, b int);
+    CREATE INDEX t_indexed_a ON t_indexed (a);
+    ALTER TABLE t_indexed DROP a;
+}
+expect {
+}
+@sqlstate 0A000
+expect @tursopg error {}
+
+# E-122: DROP COLUMN of a column in an index expression
+@compat-gap "syntax:alter-table"
+test drop-column-a-column-in-an-index-expression {
+    CREATE TABLE t_expr_indexed (a int, b int);
+    CREATE INDEX t_expr_indexed_a ON t_expr_indexed ((a + 1));
+    ALTER TABLE t_expr_indexed DROP a;
+}
+expect {
+}
+@sqlstate 0A000
+expect @tursopg error {}
+
+# E-123: DROP COLUMN of a column in a partial index's WHERE clause
+@compat-gap "syntax:alter-table"
+test drop-column-a-column-in-a-partial-index-where-clause {
+    CREATE TABLE t_partial (a int, b int);
+    CREATE INDEX t_partial_b ON t_partial (b) WHERE a > 0;
+    ALTER TABLE t_partial DROP a;
+}
+expect {
+}
+@sqlstate 0A000
+expect @tursopg error {}
+
+# E-124: DROP COLUMN of a column in a table CHECK
+@compat-gap "syntax:alter-table"
+test drop-column-a-column-in-a-table-check {
+    CREATE TABLE t_table_check (a int, b int, CHECK (a < b));
+    ALTER TABLE t_table_check DROP a;
+}
+expect {
+}
+@sqlstate 0A000
+expect @tursopg error {}
+
+# E-125: DROP COLUMN of a FOREIGN KEY column
+@compat-gap "syntax:alter-table"
+test drop-column-a-foreign-key-column {
+    CREATE TABLE t_fk_parent (id int PRIMARY KEY);
+    CREATE TABLE t_fk_child (parent_id int REFERENCES t_fk_parent (id), b int);
+    ALTER TABLE t_fk_child DROP parent_id;
+}
+expect {
+}
+@sqlstate 0A000
+expect @tursopg error {}

@@ -653,18 +653,13 @@ pub trait Dialect: Send + Sync + 'static {
         Ok(())
     }
 
-    /// The error for an `ALTER TABLE ... DROP COLUMN` that the engine refuses
-    /// before it emits any code, for the reason `refusal` gives. `table` and
-    /// `column` are spelled as SQLite's message for that reason spells them.
-    /// The default gives SQLite's message for each reason. PostgreSQL drops such a column,
-    /// with the constraints and indexes on it, which the engine cannot do, so
-    /// a dialect can say it is not supported.
-    fn drop_column_refused(
-        &self,
-        table: &str,
-        column: &str,
-        refusal: DropColumnRefusal,
-    ) -> LimboError {
+    /// The error for an `ALTER TABLE ... DROP COLUMN` of `column` that the
+    /// engine refuses for the reason `refusal` gives, with the names that
+    /// reason's message needs. The default gives SQLite's message for each
+    /// reason. PostgreSQL drops such a column, with the constraints and
+    /// indexes on it, which the engine cannot do, so a dialect can say it is
+    /// not supported.
+    fn drop_column_refused(&self, column: &str, refusal: DropColumnRefusal<'_>) -> LimboError {
         LimboError::ParseError(match refusal {
             DropColumnRefusal::PrimaryKey => {
                 format!("cannot drop PRIMARY KEY column: \"{column}\"")
@@ -673,9 +668,28 @@ pub trait Dialect: Send + Sync + 'static {
             DropColumnRefusal::OnlyColumn => {
                 format!("cannot drop column \"{column}\": no other columns exist")
             }
-            DropColumnRefusal::InTableUnique => {
+            DropColumnRefusal::InTableUnique { table, column } => {
                 format!("error in table {table} after drop column: no such column: {column}")
             }
+            DropColumnRefusal::Indexed {
+                index,
+                position_in_index,
+                position_in_table,
+            } => format!(
+                "cannot drop column \"{column}\": it is referenced in the index {index}; position in index is {position_in_index}, position in table is {position_in_table}"
+            ),
+            DropColumnRefusal::InIndexExpression { index } => {
+                format!("error in index {index} after drop column: no such column: {column}")
+            }
+            DropColumnRefusal::InPartialIndex => {
+                format!("cannot drop column \"{column}\": indexed")
+            }
+            DropColumnRefusal::InTableCheck { table } => {
+                format!("error in table {table} after drop column: no such column: {column}")
+            }
+            DropColumnRefusal::InForeignKey { table } => format!(
+                "error in table {table} after drop column: unknown column \"{column}\" in foreign key definition"
+            ),
         })
     }
 
@@ -791,10 +805,12 @@ pub fn undefined_operator_message(op: &str, operand_types: &[String]) -> String 
     }
 }
 
-/// Why `ALTER TABLE ... DROP COLUMN` refuses a column, in the order SQLite's
-/// `sqlite3AlterDropColumn` checks them.
+/// Why `ALTER TABLE ... DROP COLUMN` refuses a column, in the order the
+/// engine checks them: SQLite's `sqlite3AlterDropColumn` order for the first
+/// four, then what SQLite finds when it rewrites the schema without the
+/// column. Each carries the names its SQLite message needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DropColumnRefusal {
+pub enum DropColumnRefusal<'a> {
     /// The column is a PRIMARY KEY column or part of one.
     PrimaryKey,
     /// The column has a UNIQUE constraint of its own.
@@ -802,8 +818,24 @@ pub enum DropColumnRefusal {
     /// The column is the table's only column.
     OnlyColumn,
     /// The column is named in a table-level UNIQUE constraint. SQLite finds
-    /// this only when it rewrites the table's CREATE statement without it.
-    InTableUnique,
+    /// this only when it rewrites the table's CREATE statement without it,
+    /// and names the table as it was created and the column as the
+    /// constraint spells it.
+    InTableUnique { table: &'a str, column: &'a str },
+    /// The column is a column of an index.
+    Indexed {
+        index: &'a str,
+        position_in_index: usize,
+        position_in_table: usize,
+    },
+    /// The column is used in an index's expression.
+    InIndexExpression { index: &'a str },
+    /// The column is used in a partial index's WHERE clause.
+    InPartialIndex,
+    /// The column is used in a table-level CHECK constraint.
+    InTableCheck { table: &'a str },
+    /// The column is a child column of a FOREIGN KEY constraint.
+    InForeignKey { table: &'a str },
 }
 
 /// What a dialect decided for an operator.
